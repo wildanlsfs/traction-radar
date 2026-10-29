@@ -26,7 +26,7 @@ function apiBaseFrom(event) {
 
 async function authorised(event) {
   const { ADMIN_TOKEN } = await secrets();
-  if (!ADMIN_TOKEN) return settings.mock || process.env.DB === "memory"; // open only in local dev
+  if (!ADMIN_TOKEN) return settings.mock || (process.env.DB === "memory" && process.env.NODE_ENV !== "production"); // open only in local dev
   const given = event.headers?.["x-tr-token"] ?? "";
   const a = Buffer.from(createHash("sha256").update(given).digest("hex"));
   const b = Buffer.from(createHash("sha256").update(ADMIN_TOKEN).digest("hex"));
