@@ -1,0 +1,7 @@
+{
+  "name": "traction-radar-functions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Lambda code. No runtime dependencies: the Node.js 22 Lambda runtime ships AWS SDK v3."
+}
