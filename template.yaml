@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Traction Radar - AI agent that finds where an app's first users will come from.
+  Designed to stay inside the AWS always-free tier (Lambda, DynamoDB, SQS, CloudFront)
+  for hackathon-scale traffic. No API Gateway: Lambda Function URLs only.
+
+Parameters:
+  StageName:
+    Type: String
+    Default: prod
+  MetaModel:
+    Type: String
+    Default: muse-wonder-1.0
+    Description: Planner/agent model on Meta Model API
+  MetaFastModel:
+    Type: String
+    Default: muse-spark-1.3
+    Description: Cheaper model for extraction and verdicts
+  OpenWeightsModel:
+    Type: String
+    Default: meta-models/muse-spark-open-1026
+    Description: Muse Spark Open model id at the inference partner (Baseten/Modal)
+  OpenWeightsBaseUrl:
+    Type: String
+    Default: ""
+    Description: OpenAI-compatible base URL of the partner endpoint. Empty = fall back to Meta Model API.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 512
+    Timeout: 30
+    CodeUri: src/
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref Table
+        QUEUE_URL: !Ref JobQueue
+        ASSETS_BUCKET: !Ref AssetsBucket
+        SSM_PREFIX: !Sub "/traction-radar/${StageName}"
+        META_MODEL: !Ref MetaModel
+        META_FAST_MODEL: !Ref MetaFastModel
+        OPEN_WEIGHTS_MODEL: !Ref OpenWeightsModel
+        OPEN_WEIGHTS_BASE_URL: !Ref OpenWeightsBaseUrl
+        PUBLIC_SITE_URL: !Sub "https://${SiteDistribution.DomainName}"
+
+Resources:
+  # ---------- Data ----------
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+        - { AttributeName: gsi1pk, AttributeType: S }
+        - { AttributeName: gsi1sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - { AttributeName: gsi1pk, KeyType: HASH }
+            - { AttributeName: gsi1sk, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  JobDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  JobQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 960
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt JobDLQ.Arn
+        maxReceiveCount: 2
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------- Compute ----------
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/api.handler
+      Description: Public + owner API (Function URL)
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: ["*"]
+          AllowMethods: ["*"]
+          AllowHeaders: ["content-type", "x-tr-token"]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt JobQueue.QueueName }
+        - S3ReadPolicy: { BucketName: !Ref AssetsBucket }
+        - SSMParameterReadPolicy: { ParameterName: !Sub "traction-radar/${StageName}/*" }
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/worker.handler
+      Description: Runs agent jobs (product card, radar, experiments, creatives, verdicts)
+      Timeout: 900
+      MemorySize: 1024
+      Events:
+        Jobs:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt JobQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes: [ReportBatchItemFailures]
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt JobQueue.QueueName }
+        - S3CrudPolicy: { BucketName: !Ref AssetsBucket }
+        - SSMParameterReadPolicy: { ParameterName: !Sub "traction-radar/${StageName}/*" }
+
+  SchedulerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handlers/scheduler.handler
+      Description: Daily - enqueue measurement + verdict jobs for running experiments
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 1 * * ? *)"
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref Table }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt JobQueue.QueueName }
+
+  # ---------- Static site ----------
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-site-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_All
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          Compress: true
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+
+Outputs:
+  ApiUrl:
+    Description: Function URL for the API (paste into the dashboard settings)
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  SiteUrl:
+    Value: !Sub "https://${SiteDistribution.DomainName}"
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  TableName:
+    Value: !Ref Table
