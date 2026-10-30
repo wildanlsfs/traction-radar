@@ -106,6 +106,12 @@ test("signal URLs must be real posts, not search pages", async () => {
   assert.equal(sourceOf("https://www.threads.com/@a/post/abc"), "threads");
   assert.equal(sourceOf("https://threads.net/@a/post/abc", "forum"), "threads");
   assert.equal(sourceOf("https://kaskus.co.id/thread/x", "forum"), "forum");
+  const { draftTarget } = await import("../src/jobs/index.mjs");
+  assert.equal(draftTarget("threads_post", "https://aboutislam.net/x"), "");
+  assert.equal(draftTarget("community_post", "https://www.justuseapp.com/en/app/x/reviews"), "");
+  assert.equal(draftTarget("threads_reply", "https://www.reddit.com/r/x/comments/1"), "");
+  assert.equal(draftTarget("threads_reply", "https://www.threads.com/@a/post/1"), "https://www.threads.com/@a/post/1");
+  assert.equal(draftTarget("community_post", "https://www.lemon8-app.com/u/1"), "https://www.lemon8-app.com/u/1");
 });
 
 test("public scans are capped, read-only, and never expose owner products", async () => {

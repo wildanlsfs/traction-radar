@@ -25,6 +25,16 @@ const P = (pid) => `PRODUCT#${pid}`;
 
 // A signal must point at the actual post/page, never at a search-results page the model made up.
 const SEARCH_PAGE = /(youtube\.com\/results|google\.[a-z.]+\/search|bing\.com\/search|duckduckgo\.com\/|search\.yahoo\.|[?&](q|query|search_query|keyword)=)/i;
+// A draft can only be a reply where a public reply is possible; otherwise it becomes a new post.
+const NOT_REPLYABLE = /(play\.google\.com|apps\.apple\.com|justuseapp|appbrain|apkpure|apkcombo|similarweb|trustpilot|g2\.com|capterra)/i;
+export function draftTarget(channel, url) {
+  const u = String(url ?? "").trim();
+  if (!u || channel === "threads_post" || channel === "ad_test") return "";
+  if (!isPublicHttpUrl(u) || NOT_REPLYABLE.test(u)) return "";
+  if (channel === "threads_reply" && sourceOf(u) !== "threads") return "";
+  return u;
+}
+
 // Threads posts found through web search still count as Threads demand.
 export function sourceOf(url, fallback = "web") {
   try {
@@ -378,7 +388,10 @@ async function plan(job, trace) {
       "Use the traction bank priors: prefer channels/angles that won for similar products, but keep one exploratory bet. " +
       "Do not repeat experiments that were killed before. If the product is in a restricted ad category, do not plan ad_test unless approval is confirmed. " +
       "The 3 experiments MUST use 3 different channels and at least 2 different angle_type values, so the week tests distinct hypotheses. " +
-      "Write drafts ready to send as-is: no placeholders like [nama] or [name]; refer to the author as 'the founder of <product name>' in the market language.",
+      "Write drafts ready to send as-is: no placeholders like [nama] or [name]; refer to the author as 'the founder of <product name>' in the market language. " +
+      "Draft targets must be postable: threads_post and ad_test drafts are NEW posts (target_url ''); threads_reply drafts target a Threads post URL; " +
+      "community_post replies may only target a discussion URL from top_signals where anyone can reply (Threads, Reddit, Lemon8, Quora, Kaskus, a forum thread) — " +
+      "never app-store pages, review aggregators or news articles; when no such URL exists, write a new post for that community and leave target_url ''.",
     input: JSON.stringify({
       product: card,
       ad_policy_flags: product.adPolicy,
@@ -386,10 +399,15 @@ async function plan(job, trace) {
       clusters: clusters.map((c) => ({ label: c.label, summary: c.summary, intensity: c.intensity, exact_phrases: c.exactPhrases })),
       top_signals: signals.map((s) => ({ url: s.url, author: s.author, text: s.text.slice(0, 300), intent: s.intent })),
       intermediaries: intermediaries.map((m) => ({ name: m.name, type: m.type, url: m.url, offer: m.offer })),
-      past_experiments: past.map((e) => ({ title: e.title, channel: e.channel, angle_type: e.angle_type, verdict: e.verdict?.verdict, clicks: e.clicks ?? 0, signups: e.signups ?? 0 })),
+      past_experiments: past.filter((e) => e.status !== "superseded").map((e) => ({ title: e.title, channel: e.channel, angle_type: e.angle_type, verdict: e.verdict?.verdict, clicks: e.clicks ?? 0, signups: e.signups ?? 0 })),
       traction_bank_priors: bank,
     }),
   });
+
+  // Experiments that never started are replaced by the new plan instead of piling up.
+  for (const e of past)
+    if (e.status === "draft" && !(e.drafts ?? []).some((d) => d.status === "posted"))
+      await db.update(P(product.id), e.sk, { status: "superseded" });
 
   // Guard against the model ignoring the diversity rule: keep the first experiment per channel.
   const seenChannels = new Set();
@@ -420,7 +438,7 @@ async function plan(job, trace) {
       priorEvidence: e.prior_evidence,
       drafts: e.drafts.map((d) => ({
         id: id(6),
-        targetUrl: d.target_url,
+        targetUrl: draftTarget(e.channel, d.target_url),
         text: d.text.replaceAll("{link}", link).replace(/\[(nama|name|nama anda|your name)\]/gi, card.name ? `founder ${card.name}` : "founder"),
         status: "pending_approval",
       })),
