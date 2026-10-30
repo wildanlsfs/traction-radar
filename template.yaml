@@ -25,6 +25,10 @@ Parameters:
     Type: String
     Default: ""
     Description: OpenAI-compatible base URL of the partner endpoint. Empty = fall back to Meta Model API.
+  PublicSiteUrl:
+    Type: String
+    Default: ""
+    Description: Public dashboard URL (e.g. https://dxxxx.cloudfront.net). When set, tracking links use it (/r/* is routed to the API).
   DemoProductId:
     Type: String
     Default: ""
@@ -47,7 +51,7 @@ Globals:
         META_FAST_MODEL: !Ref MetaFastModel
         OPEN_WEIGHTS_MODEL: !Ref OpenWeightsModel
         OPEN_WEIGHTS_BASE_URL: !Ref OpenWeightsBaseUrl
-        PUBLIC_SITE_URL: !Sub "https://${SiteDistribution.DomainName}"
+        PUBLIC_SITE_URL: !Ref PublicSiteUrl
         DEMO_PRODUCT_ID: !Ref DemoProductId
 
 Resources:
@@ -180,6 +184,17 @@ Resources:
             DomainName: !GetAtt SiteBucket.RegionalDomainName
             OriginAccessControlId: !GetAtt SiteOAC.Id
             S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: api
+            DomainName: !Select [2, !Split ["/", !GetAtt ApiFunctionUrl.FunctionUrl]]
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
+        CacheBehaviors:
+          # Short, trustworthy tracking links on the dashboard's own domain: /r/<slug> -> API redirect.
+          - PathPattern: /r/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            AllowedMethods: [GET, HEAD]
         DefaultCacheBehavior:
           TargetOriginId: site
           ViewerProtocolPolicy: redirect-to-https

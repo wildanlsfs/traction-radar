@@ -372,7 +372,8 @@ async function radar(job, trace) {
 
 // ------------------------------------------------------------------ plan experiments
 export function trackingUrl(apiBase, slug) {
-  return `${(apiBase || process.env.API_BASE_URL || settings.publicSiteUrl).replace(/\/$/, "")}/r/${slug}`;
+  const site = process.env.PUBLIC_SITE_URL; // dashboard domain routes /r/* to the API: shorter, more trustworthy links
+  return `${(site || apiBase || process.env.API_BASE_URL || settings.publicSiteUrl).replace(/\/$/, "")}/r/${slug}`;
 }
 
 async function plan(job, trace) {
@@ -418,7 +419,7 @@ async function plan(job, trace) {
 
   // Experiments that never started are replaced by the new plan instead of piling up.
   for (const e of past)
-    if (e.status === "draft" && !(e.drafts ?? []).some((d) => d.status === "posted"))
+    if ((e.status === "draft" || e.status === "blocked_policy") && !(e.drafts ?? []).some((d) => d.status === "posted"))
       await db.update(P(product.id), e.sk, { status: "superseded" });
 
   // Guard against the model ignoring the diversity rule: keep the first experiment per channel.
