@@ -127,7 +127,8 @@ export async function respond({ name, input, instructions, schema, webSearch, ef
  * Tool-calling agent loop on the Responses API.
  * tools: [{ name, description, parameters, run: async (args) => any }]
  */
-export async function agent({ name, input, instructions, tools, webSearch, maxTurns = 8, effort = "high", model, trace }) {
+export async function agent({ name, input, instructions, tools, webSearch, maxTurns = 8, effort = "high", model, trace, budgetMs }) {
+  const started = Date.now();
   model ??= settings.metaModel;
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   const apiTools = tools.map(({ name, description, parameters }) => ({
@@ -157,7 +158,12 @@ export async function agent({ name, input, instructions, tools, webSearch, maxTu
 
   let previous_response_id;
   let nextInput = input;
+  const seenResults = [];
   for (let turn = 0; turn < maxTurns; turn++) {
+    if (budgetMs && Date.now() - started > budgetMs) {
+      trace?.add({ kind: "note", name: `${name}: time budget reached after ${turn} turns, keeping recorded results` });
+      return { id: previous_response_id, text: "", citations: [], searchResults: seenResults, stoppedEarly: true };
+    }
     const body = { model, input: nextInput, tools: apiTools, reasoning: { effort }, parallel_tool_calls: true };
     if (instructions) body.instructions = instructions;
     if (previous_response_id) body.previous_response_id = previous_response_id;
@@ -165,6 +171,7 @@ export async function agent({ name, input, instructions, tools, webSearch, maxTu
     const t0 = Date.now();
     const response = await post(`${settings.metaBaseUrl}/responses`, body, META_API_KEY);
     previous_response_id = response.id;
+    seenResults.push(...searchResults(response));
     const calls = (response.output ?? []).filter((i) => i.type === "function_call");
     trace?.add({
       kind: "model",
@@ -176,7 +183,7 @@ export async function agent({ name, input, instructions, tools, webSearch, maxTu
       usage: response.usage,
     });
     if (!calls.length) {
-      return { id: response.id, text: outputText(response), citations: citations(response), searchResults: searchResults(response) };
+      return { id: response.id, text: outputText(response), citations: citations(response), searchResults: seenResults };
     }
     const outputs = await Promise.all(
       calls.map(async (c) => {
@@ -200,7 +207,8 @@ export async function agent({ name, input, instructions, tools, webSearch, maxTu
     );
     nextInput = outputs;
   }
-  throw new Error(`${name}: agent did not finish within ${maxTurns} turns`);
+  trace?.add({ kind: "note", name: `${name}: reached ${maxTurns} turns, keeping recorded results` });
+  return { id: previous_response_id, text: "", citations: [], searchResults: seenResults, stoppedEarly: true };
 }
 
 /** Muse Image: returns { b64, url } */

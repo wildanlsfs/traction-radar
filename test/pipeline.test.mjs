@@ -94,3 +94,12 @@ test("rejects private URLs and unknown slugs", async () => {
   assert.equal((await call("GET", "/r/nope")).statusCode, 404);
   assert.equal((await call("POST", "/e", { slug: "nope", event: "signup" })).statusCode, 404);
 });
+
+test("signal URLs must be real posts, not search pages", async () => {
+  const { isPostUrl } = await import("../src/jobs/index.mjs");
+  assert.equal(isPostUrl("https://www.youtube.com/results?search_query=gagal+taaruf"), false);
+  assert.equal(isPostUrl("https://www.google.com/search?q=x"), false);
+  assert.equal(isPostUrl("http://127.0.0.1/x"), false);
+  assert.equal(isPostUrl("https://www.threads.com/@a/post/abc"), true);
+  assert.equal(isPostUrl("https://play.google.com/store/apps/details?id=taarufapp.id"), true);
+});

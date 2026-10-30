@@ -23,6 +23,16 @@ import {
 
 const P = (pid) => `PRODUCT#${pid}`;
 
+// A signal must point at the actual post/page, never at a search-results page the model made up.
+const SEARCH_PAGE = /(youtube\.com\/results|google\.[a-z.]+\/search|bing\.com\/search|duckduckgo\.com\/|search\.yahoo\.|[?&](q|query|search_query|keyword)=)/i;
+export function isPostUrl(url) {
+  if (!url || !isPublicHttpUrl(url)) return false;
+  return !SEARCH_PAGE.test(url);
+}
+
+// Lambda allows 900 s; leave room for scoring, clustering and writes after the agent loop.
+const RADAR_AGENT_BUDGET_MS = 6 * 60 * 1000;
+
 async function loadProduct(pid) {
   const p = await db.get(P(pid), "META");
   if (!p) throw new Error(`product ${pid} not found`);
@@ -160,14 +170,23 @@ async function radar(job, trace) {
       },
       run: async ({ signals }) => {
         let added = 0;
+        let rejected = 0;
         for (const s of signals ?? []) {
           if (!s.text || s.text.length < 15) continue;
+          if (!isPostUrl(s.url)) {
+            rejected++;
+            continue;
+          }
           const key = s.url || s.text.slice(0, 80);
           if (found.has(key)) continue;
           found.set(key, { ...s, text: s.text.slice(0, 1500) });
           added++;
         }
-        return { saved: added, total: found.size };
+        return {
+          saved: added,
+          total: found.size,
+          ...(rejected ? { rejected, note: "Rejected entries whose url is a search-results page or not a public post/page. Only record URLs of the actual post." } : {}),
+        };
       },
     },
     {
@@ -206,12 +225,14 @@ async function radar(job, trace) {
     trace,
     tools,
     webSearch: true,
-    maxTurns: 10,
+    maxTurns: 8,
+    effort: "medium",
+    budgetMs: RADAR_AGENT_BUDGET_MS,
     instructions:
       "You are a demand scout for an app that has zero users. Find REAL people in public who have the problem it solves, " +
       "and the intermediaries who already gather them. Process: (1) run search_threads with 4-8 of the provided phrases and variations, " +
       "(2) use web search for forums, Q&A sites, Reddit, Kaskus, Quora, Facebook pages and articles' comment threads, " +
-      "(3) call record_signals with every relevant post you saw (exact text, public URL, public handle), " +
+      "(3) call record_signals after EVERY search round (not only at the end) with each relevant post you saw: exact text, the URL of that specific post or page (never a search-results URL), public handle, " +
       "(4) call record_intermediaries. Aim for 25-60 signals. Skip ads, brand posts and the product's own posts. " +
       "Do not collect private data beyond the public handle. When done, reply with one short paragraph of what you found.",
     input: JSON.stringify({
@@ -223,7 +244,7 @@ async function radar(job, trace) {
   // Also harvest raw web results the model saw but did not record, as low-confidence candidates.
   for (const r of result.searchResults ?? []) {
     const key = r.url;
-    if (key && !found.has(key) && r.snippet && r.snippet.length > 40)
+    if (key && isPostUrl(key) && !found.has(key) && r.snippet && r.snippet.length > 40)
       found.set(key, { source: "web", url: r.url, author: r.title ?? "", text: r.snippet.slice(0, 800), harvested: true });
   }
 
@@ -345,7 +366,9 @@ async function plan(job, trace) {
       "Rules: use the users' own words (exact phrases) in angles; drafts must be genuinely helpful, disclose that the author built the product, " +
       "never fake testimonials, never spam the same text to many people, at most 5 drafts per experiment; reply drafts must answer the person's actual post. " +
       "Use the traction bank priors: prefer channels/angles that won for similar products, but keep one exploratory bet. " +
-      "Do not repeat experiments that were killed before. If the product is in a restricted ad category, do not plan ad_test unless approval is confirmed.",
+      "Do not repeat experiments that were killed before. If the product is in a restricted ad category, do not plan ad_test unless approval is confirmed. " +
+      "The 3 experiments MUST use 3 different channels and at least 2 different angle_type values, so the week tests distinct hypotheses. " +
+      "Write drafts ready to send as-is: no placeholders like [nama] or [name]; refer to the author as 'the founder of <product name>' in the market language.",
     input: JSON.stringify({
       product: card,
       ad_policy_flags: product.adPolicy,
@@ -358,8 +381,12 @@ async function plan(job, trace) {
     }),
   });
 
+  // Guard against the model ignoring the diversity rule: keep the first experiment per channel.
+  const seenChannels = new Set();
+  const picked = r.json.experiments.filter((e) => !seenChannels.has(e.channel) && seenChannels.add(e.channel));
+  for (const e of r.json.experiments) if (picked.length < 3 && !picked.includes(e)) picked.push(e);
   const created = [];
-  for (const e of r.json.experiments.slice(0, 3)) {
+  for (const e of picked.slice(0, 3)) {
     const eid = id(8);
     const slug = id(7);
     const link = trackingUrl(job.apiBase || product.apiBase, slug);
@@ -384,7 +411,7 @@ async function plan(job, trace) {
       drafts: e.drafts.map((d) => ({
         id: id(6),
         targetUrl: d.target_url,
-        text: d.text.replaceAll("{link}", link),
+        text: d.text.replaceAll("{link}", link).replace(/\[(nama|name|nama anda|your name)\]/gi, card.name ? `founder ${card.name}` : "founder"),
         status: "pending_approval",
       })),
       status: blocked ? "blocked_policy" : "draft",

@@ -104,7 +104,7 @@ export const experimentsSchema = obj({
       ),
       prior_evidence: str("What the traction bank or radar says about this choice"),
     }),
-    "Exactly 3 experiments, different channels where possible",
+    "Exactly 3 experiments, each on a different channel",
   ),
 });
 
