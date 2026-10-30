@@ -16,6 +16,8 @@ async function api(path, { method = "GET", body } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401)
+    throw Object.assign(new Error(token ? "The access token was rejected. Check it in Settings." : "Add your access token in Settings first."), { status: 401 });
   if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
   return data;
 }
@@ -411,13 +413,19 @@ function settingsView() {
       <label>Access token <input name="token" type="password" value="${esc(c.token)}" autocomplete="off"/></label>
       <div class="row"><button class="btn primary">Save settings</button></div>
     </form>`;
-  $("#settings").onsubmit = (e) => {
+  $("#settings").onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     store.set("tr_api", f.api.trim().replace(/\/$/, ""));
     store.set("tr_token", f.token.trim());
-    toast("Settings saved");
-    renderRail();
+    try {
+      await api("/api/products");
+      toast("Connected. Settings saved.");
+      renderRail();
+      location.hash = "#/";
+    } catch (err) {
+      toast(err.status === 401 ? "Saved, but the API rejected this access token. Paste it again without spaces." : `Saved, but the API couldn't be reached: ${err.message}`);
+    }
   };
 }
 
@@ -439,6 +447,10 @@ $("#newProductForm").addEventListener("submit", async (ev) => {
     toast("Radar started");
   } catch (e) {
     toast(e.message);
+    if (e.status === 401) {
+      $("#newProduct").close();
+      location.hash = "#/settings";
+    }
   }
 });
 
