@@ -134,7 +134,8 @@ async function productView(pid, tab = "overview") {
   }
   if (gen !== renderGen) return;
   const { product: p, signals, clusters, jobs, intermediaries } = data;
-  const experiments = data.experiments.filter((e) => e.status !== "superseded");
+  const ORDER_EXP = { running: 0, decided: 1, draft: 2, blocked_policy: 3 };
+  const experiments = data.experiments.filter((e) => e.status !== "superseded").sort((x, y) => (ORDER_EXP[x.status] ?? 9) - (ORDER_EXP[y.status] ?? 9));
   const base = isDemo() ? demoBase : `#/p/${pid}`;
   if (isDemo() && !isTry() && railDemoName !== (p.card?.name || p.name)) { railDemoName = p.card?.name || p.name; store.set("tr_demo_name", railDemoName); renderRail("demo"); }
   if (isTry() && store.get("tr_try", "") === pid && store.get("tr_try_name", "") !== (p.card?.name || p.name)) { store.set("tr_try_name", p.card?.name || p.name); renderRail(pid); }
