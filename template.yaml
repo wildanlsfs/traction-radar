@@ -25,6 +25,10 @@ Parameters:
     Type: String
     Default: ""
     Description: OpenAI-compatible base URL of the partner endpoint. Empty = fall back to Meta Model API.
+  DemoProductId:
+    Type: String
+    Default: ""
+    Description: Product shown read-only at /#/demo without a token. Empty = no public demo.
 
 Globals:
   Function:
@@ -44,6 +48,7 @@ Globals:
         OPEN_WEIGHTS_MODEL: !Ref OpenWeightsModel
         OPEN_WEIGHTS_BASE_URL: !Ref OpenWeightsBaseUrl
         PUBLIC_SITE_URL: !Sub "https://${SiteDistribution.DomainName}"
+        DEMO_PRODUCT_ID: !Ref DemoProductId
 
 Resources:
   # ---------- Data ----------

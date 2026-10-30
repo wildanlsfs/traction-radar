@@ -17,6 +17,9 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 const cfg = () => ({ api: store.get("tr_api", ""), token: store.get("tr_token", "") });
+// Demo mode: read-only view of one showcase product, no token needed.
+const isDemo = () => document.body.classList.contains("demo");
+const setDemo = (on) => { document.body.classList.toggle("demo", on); store.set("tr_demo", on); };
 
 async function api(path, { method = "GET", body } = {}) {
   const { api: base, token } = cfg();
@@ -62,6 +65,12 @@ const VERDICT = { keep: "Keep going", kill: "Stop this one", ready_for_ads: "Rea
 // ---------------------------------------------------------------- rail
 async function renderRail(activeId) {
   const nav = $("#productList");
+  $("#railAuth").textContent = isDemo() ? "Sign in" : "Settings";
+  $("#railAuth").href = isDemo() ? "#/signin" : "#/settings";
+  if (isDemo()) {
+    nav.innerHTML = `<a href="#/demo" ${activeId === "demo" ? 'aria-current="page"' : ""}>${esc(railDemoName)}<small>Live demo · read-only</small></a>`;
+    return;
+  }
   try {
     const { products } = await api("/api/products");
     nav.innerHTML = products.length
@@ -89,6 +98,8 @@ function stageText(stage) {
   );
 }
 
+let railDemoName = "Demo product";
+
 // ---------------------------------------------------------------- views
 const view = () => $("#view");
 
@@ -109,7 +120,7 @@ async function productView(pid, tab = "overview") {
   const gen = ++renderGen;
   let data;
   try {
-    data = await api(`/api/products/${pid}`);
+    data = await api(isDemo() ? "/demo" : `/api/products/${pid}`);
   } catch (e) {
     if (gen !== renderGen) return;
     view().innerHTML = `<section class="empty"><h1>Couldn't load this product</h1><p>${esc(e.message)}</p></section>`;
@@ -117,6 +128,8 @@ async function productView(pid, tab = "overview") {
   }
   if (gen !== renderGen) return;
   const { product: p, signals, clusters, experiments, jobs, intermediaries } = data;
+  const base = isDemo() ? "#/demo" : `#/p/${pid}`;
+  if (isDemo() && railDemoName !== (p.card?.name || p.name)) { railDemoName = p.card?.name || p.name; renderRail("demo"); }
   const card = p.card;
   const idx = ORDER.indexOf(p.stage);
   const stepState = (s) => {
@@ -135,6 +148,7 @@ async function productView(pid, tab = "overview") {
   ];
 
   view().innerHTML = `
+    ${isDemo() ? `<div class="demo-bar"><p><b>Live demo, read-only.</b> A real Traction Radar run on ${esc(p.card?.name || p.name)}, a live product. Posting, rescans and edits are switched off.</p><a class="btn" href="#/signin">Sign in</a></div>` : ""}
     <header class="head">
       <div>
         <h1>${esc(card?.name || p.name)}</h1>
@@ -156,7 +170,7 @@ async function productView(pid, tab = "overview") {
     <ol class="course" aria-label="Progress">${STEPS.map((s) => `<li class="${stepState(s)}">${s.label}</li>`).join("")}</ol>
     ${p.stage === "error" ? `<div class="policy"><h3>The last step failed</h3><p>${esc(p.stageError)}</p><div class="row" style="margin-top:10px"><button class="btn" data-run="all">Run everything again</button></div></div>` : ""}
     <nav class="tabs">${tabs
-      .map(([k, label, n]) => `<a href="#/p/${pid}/${k}" ${k === tab ? 'aria-current="page"' : ""}>${label}${n !== undefined ? `<span class="count">${n}</span>` : ""}</a>`)
+      .map(([k, label, n]) => `<a href="${base}/${k}" ${k === tab ? 'aria-current="page"' : ""}>${label}${n !== undefined ? `<span class="count">${n}</span>` : ""}</a>`)
       .join("")}</nav>
     <div id="tab"></div>`;
 
@@ -180,7 +194,7 @@ async function productView(pid, tab = "overview") {
   if (tab === "experiments") renderExperiments(el, pid, experiments, p);
   if (tab === "trace") renderTrace(el, jobs);
 
-  if (BUSY.has(p.stage) || jobs.some((j) => j.status === "queued" || j.status === "running")) {
+  if (!isDemo() && (BUSY.has(p.stage) || jobs.some((j) => j.status === "queued" || j.status === "running"))) {
     pollTimer = setTimeout(async () => {
       if (location.hash.startsWith(`#/p/${pid}`)) {
         const keepScroll = scrollY;
@@ -436,7 +450,7 @@ function renderTrace(el, jobs) {
 async function bankView() {
   let b;
   try {
-    b = await api("/api/bank");
+    b = await api(isDemo() ? "/demo/bank" : "/api/bank");
   } catch (e) {
     view().innerHTML = `<section class="empty"><h1>Traction bank</h1><p>${esc(e.message)}</p></section>`;
     return;
@@ -461,8 +475,9 @@ function settingsView() {
     <form id="settings" class="section" style="margin-top:24px;max-width:560px;display:flex;flex-direction:column;gap:14px">
       <label>API address <input name="api" value="${esc(c.api)}" placeholder="Leave empty when the API runs on this site"/></label>
       <label>Access token <input name="token" type="password" value="${esc(c.token)}" autocomplete="off"/></label>
-      <div class="row"><button class="btn primary">Save settings</button></div>
+      <div class="row"><button class="btn primary">Save settings</button><button class="btn quiet" type="button" id="signOut">Sign out</button></div>
     </form>`;
+  $("#signOut").onclick = () => { store.set("tr_token", ""); location.hash = "#/signin"; };
   $("#settings").onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -475,6 +490,47 @@ function settingsView() {
       location.hash = "#/";
     } catch (err) {
       toast(err.status === 401 ? "Saved, but the API rejected this access token. Paste it again without spaces." : `Saved, but the API couldn't be reached: ${err.message}`);
+    }
+  };
+}
+
+function signInView() {
+  document.body.classList.add("signin");
+  view().innerHTML = `
+    <section class="signin-page">
+      <div class="signin-copy">
+        <a class="brand big" href="#/signin" aria-label="Traction Radar">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="16" cy="16" r="8" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2"/><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width=".75"/><path d="M16 4l2 12-2 2-2-2z" fill="currentColor"/><circle cx="23" cy="10" r="2.6" fill="var(--hot)"/></svg>
+          <span>Traction Radar</span>
+        </a>
+        <h1>Find your app’s first users from the people already asking for it.</h1>
+        <p class="lede">An agent reads your product, finds real public posts describing the problem you solve, and plans three small experiments you can measure this week.</p>
+        <a class="btn primary" href="#/demo">View the live demo</a>
+        <p class="hint">The demo is a real run on a live product. It is read-only and needs no account.</p>
+      </div>
+      <form id="signinForm" class="signin-card">
+        <h2>Sign in</h2>
+        <label>Access token <input name="token" type="password" autocomplete="current-password" required /></label>
+        <details class="more"><summary>API address</summary><label style="margin-top:10px">API address <input name="api" value="${esc(cfg().api)}" placeholder="Leave empty when the API runs on this site" /></label></details>
+        <button class="btn primary wide">Sign in</button>
+        <p class="hint">This instance has one owner. Founder accounts are on the roadmap.</p>
+      </form>
+    </section>`;
+  $("#signinForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const prev = cfg();
+    store.set("tr_token", f.token.trim());
+    if (f.api !== undefined) store.set("tr_api", f.api.trim().replace(/\/$/, ""));
+    try {
+      await api("/api/products");
+      setDemo(false);
+      document.body.classList.remove("signin");
+      toast("Signed in");
+      location.hash = "#/";
+    } catch (err) {
+      store.set("tr_token", prev.token);
+      toast(err.status === 401 ? "That access token was rejected." : `Couldn't reach the API: ${err.message}`);
     }
   };
 }
@@ -509,7 +565,18 @@ async function router() {
   clearTimeout(pollTimer);
   renderGen++;
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  if (parts[0] === "p" && parts[1]) {
+  const signedIn = Boolean(cfg().token);
+  document.body.classList.remove("signin");
+  if (parts[0] === "demo") setDemo(true);
+  else if (signedIn) setDemo(false);
+  else if (!(store.get("tr_demo", false) && parts[0] === "bank")) setDemo(false);
+
+  if (parts[0] === "signin" || (!signedIn && !isDemo())) {
+    signInView();
+  } else if (parts[0] === "demo") {
+    renderRail("demo");
+    await productView("demo", parts[1] || "demand");
+  } else if (parts[0] === "p" && parts[1]) {
     renderRail(parts[1]);
     await productView(parts[1], parts[2] || "overview");
   } else if (parts[0] === "bank") {

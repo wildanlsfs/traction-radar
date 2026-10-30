@@ -10,7 +10,7 @@ const WEB = new URL("../web/", import.meta.url).pathname;
 const { route } = await import("../src/handlers/api.mjs");
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const API_PREFIXES = ["/api", "/r/", "/e", "/t.js", "/assets/", "/health"];
+const API_PREFIXES = ["/api", "/demo", "/r/", "/e", "/t.js", "/assets/", "/health"];
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);

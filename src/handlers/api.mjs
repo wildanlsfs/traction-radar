@@ -240,6 +240,18 @@ export async function route(event) {
     return { statusCode: 200, headers: { "content-type": asset.contentType, "cache-control": "public, max-age=86400" }, body: asset.body.toString("base64"), isBase64Encoded: true };
   }
 
+  // Read-only public demo: one showcase product chosen by the owner, plus the anonymous bank.
+  if (parts[0] === "demo" && method === "GET") {
+    if (parts[1] === "bank") return json(200, await bankOverview());
+    if (!settings.demoProductId) return json(404, { error: "no demo configured" });
+    const res = await getProduct(settings.demoProductId);
+    if (res.statusCode !== 200) return res;
+    const data = JSON.parse(res.body);
+    delete data.events;
+    data.jobs = data.jobs.filter((j) => j.status !== "error");
+    return json(200, { ...data, demo: true });
+  }
+
   if (parts[0] !== "api") return json(404, { error: "not found" });
   if (!(await authorised(event))) return json(401, { error: "unauthorised" });
 

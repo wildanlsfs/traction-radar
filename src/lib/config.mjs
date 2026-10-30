@@ -51,4 +51,5 @@ export const settings = {
   threadsBaseUrl: "https://graph.threads.com/v1.0",
   publicSiteUrl: process.env.PUBLIC_SITE_URL || "http://localhost:8787",
   mock: process.env.MOCK_LLM === "1",
+  demoProductId: process.env.DEMO_PRODUCT_ID || "",
 };
