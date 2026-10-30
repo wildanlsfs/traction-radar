@@ -35,8 +35,10 @@ export async function secrets() {
       console.warn("SSM load failed:", err.name);
     }
   }
-  cache = { ...fromSsm, ...fromEnv };
-  return cache;
+  const merged = { ...fromSsm, ...fromEnv };
+  // Only cache once the required secrets exist, so a key added later is picked up without a redeploy.
+  if (merged.META_API_KEY && merged.ADMIN_TOKEN) cache = merged;
+  return merged;
 }
 
 export const settings = {
