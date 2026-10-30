@@ -6,3 +6,4 @@ samconfig.toml
 *.log
 .DS_Store
 data/local-db.json
+data/
