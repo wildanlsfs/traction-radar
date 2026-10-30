@@ -27,12 +27,15 @@ const P = (pid) => `PRODUCT#${pid}`;
 const SEARCH_PAGE = /(youtube\.com\/results|google\.[a-z.]+\/search|bing\.com\/search|duckduckgo\.com\/|search\.yahoo\.|[?&](q|query|search_query|keyword)=)/i;
 // A draft can only be a reply where a public reply is possible; otherwise it becomes a new post.
 const NOT_REPLYABLE = /(play\.google\.com|apps\.apple\.com|justuseapp|appbrain|apkpure|apkcombo|similarweb|trustpilot|g2\.com|capterra)/i;
+const REPLYABLE_HOST = /(^|\.)(threads\.(com|net)|reddit\.com|lemon8-app\.com|quora\.com|kaskus\.co\.id|facebook\.com|instagram\.com|x\.com|twitter\.com|youtube\.com|tiktok\.com)$/i;
+const REPLYABLE_PATH = /\/(forum|forums|thread|threads|topic|t|discussion|comments?)\//i;
 export function draftTarget(channel, url) {
   const u = String(url ?? "").trim();
   if (!u || channel === "threads_post" || channel === "ad_test") return "";
   if (!isPublicHttpUrl(u) || NOT_REPLYABLE.test(u)) return "";
-  if (channel === "threads_reply" && sourceOf(u) !== "threads") return "";
-  return u;
+  if (channel === "threads_reply") return sourceOf(u) === "threads" ? u : "";
+  if (channel === "intermediary_outreach") return /\.pdf($|\?)|\/download\//i.test(u) ? "" : u; // the partner's site or profile
+  return REPLYABLE_HOST.test(new URL(u).hostname) || REPLYABLE_PATH.test(new URL(u).pathname) ? u : "";
 }
 
 // Threads posts found through web search still count as Threads demand.

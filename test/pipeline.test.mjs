@@ -112,6 +112,10 @@ test("signal URLs must be real posts, not search pages", async () => {
   assert.equal(draftTarget("threads_reply", "https://www.reddit.com/r/x/comments/1"), "");
   assert.equal(draftTarget("threads_reply", "https://www.threads.com/@a/post/1"), "https://www.threads.com/@a/post/1");
   assert.equal(draftTarget("community_post", "https://www.lemon8-app.com/u/1"), "https://www.lemon8-app.com/u/1");
+  assert.equal(draftTarget("community_post", "https://researchhub.id/index.php/jimek/article/download/5894/3346"), "");
+  assert.equal(draftTarget("community_post", "https://www.karyapelaut.com/2021/02/pertanyaan-interview-pelaut.html"), "");
+  assert.equal(draftTarget("community_post", "https://forum.example.org/t/pelaut-interview/12"), "https://forum.example.org/t/pelaut-interview/12");
+  assert.equal(draftTarget("intermediary_outreach", "https://www.karyapelaut.com/"), "https://www.karyapelaut.com/");
 });
 
 test("public scans are capped, read-only, and never expose owner products", async () => {
