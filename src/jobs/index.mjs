@@ -68,6 +68,11 @@ async function setJob(job, fields) {
   await db.update(P(job.productId), `JOB#${job.enqueuedAt}#${job.jobId}`, { ...fields, updatedAt: now() });
 }
 
+export async function failJob(job, err) {
+  await setJob(job, { status: "error", finishedAt: now(), error: String(err.message || err).slice(0, 1000) });
+  if (job.productId) await db.update(P(job.productId), "META", { stage: "error", stageError: String(err.message || err).slice(0, 500) });
+}
+
 export async function runJob(job) {
   const handler = JOBS[job.type];
   if (!handler) throw new Error(`unknown job type ${job.type}`);

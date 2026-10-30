@@ -208,7 +208,7 @@ async function runStep(pid, event) {
   if (!type) return json(400, { error: "step must be card|radar|plan|measure|all" });
   const product = await db.get(P(pid), "META");
   if (!product) return json(404, { error: "not found" });
-  const job = await enqueue({ type, productId: pid, chain: step === "all" ? ["radar", "plan"] : [], apiBase: apiBaseFrom(event) });
+  const job = await enqueue({ type, productId: pid, chain: step === "all" ? ["radar", "plan"] : step === "radar" ? ["plan"] : [], apiBase: apiBaseFrom(event) });
   return json(202, { jobId: job.jobId });
 }
 

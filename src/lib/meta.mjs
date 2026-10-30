@@ -17,13 +17,22 @@ export class Trace {
   }
 }
 
-async function post(url, body, apiKey, { retries = 2 } = {}) {
+async function post(url, body, apiKey, { retries = 3, timeoutMs = 300_000 } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      // Network drop or timeout: retry with backoff, then give up with a clear message.
+      if (attempt >= retries) throw new Error(`network error calling ${new URL(url).host}: ${err.cause?.code || err.name || err.message}`);
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      continue;
+    }
     if (res.ok) return res.json();
     const text = await res.text();
     const retryable = res.status === 429 || res.status >= 500;
@@ -169,7 +178,15 @@ export async function agent({ name, input, instructions, tools, webSearch, maxTu
     if (previous_response_id) body.previous_response_id = previous_response_id;
     if (webSearch) body.include = ["web_search_call.results"];
     const t0 = Date.now();
-    const response = await post(`${settings.metaBaseUrl}/responses`, body, META_API_KEY);
+    let response;
+    try {
+      response = await post(`${settings.metaBaseUrl}/responses`, body, META_API_KEY, { retries: 1, timeoutMs: 180_000 });
+    } catch (err) {
+      // Keep the work already done (tools persist what they record) instead of failing the whole run.
+      if (turn === 0) throw err;
+      trace?.add({ kind: "note", name: `${name}: stopped after ${turn} turns (${err.message.slice(0, 120)}), keeping recorded results` });
+      return { id: previous_response_id, text: "", citations: [], searchResults: seenResults, stoppedEarly: true };
+    }
     previous_response_id = response.id;
     seenResults.push(...searchResults(response));
     const calls = (response.output ?? []).filter((i) => i.type === "function_call");
