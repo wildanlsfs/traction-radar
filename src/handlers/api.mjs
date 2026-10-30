@@ -252,6 +252,14 @@ async function updateDraft(pid, eid, did, event) {
   return json(200, { experiment: strip(updated), intentUrl: threadsIntentUrl(drafts.find((d) => d.id === did)?.text ?? "") });
 }
 
+async function archiveExperiment(pid, eid) {
+  const e = await db.get(P(pid), `EXP#${eid}`);
+  if (!e) return json(404, { error: "not found" });
+  if (e.status === "running" || e.status === "decided") return json(409, { error: "running or decided experiments are kept for the traction bank" });
+  const updated = await db.update(P(pid), `EXP#${eid}`, { status: "superseded" });
+  return json(200, { experiment: strip(updated) });
+}
+
 async function publishDraft(pid, eid, did) {
   const e = await db.get(P(pid), `EXP#${eid}`);
   const d = e?.drafts?.find((x) => x.id === did);
@@ -311,6 +319,7 @@ export async function route(event) {
   if (a === "products" && b && c === "run" && method === "POST") return runStep(b, event);
   if (a === "experiments" && b && c && d === "start" && method === "POST") return startExperiment(b, c);
   if (a === "experiments" && b && c && d === "metrics" && method === "POST") return addMetrics(b, c, event);
+  if (a === "experiments" && b && c && d === "archive" && method === "POST") return archiveExperiment(b, c);
   if (a === "experiments" && b && c && d === "drafts" && e2 && !f && method === "POST") return updateDraft(b, c, e2, event);
   if (a === "experiments" && b && c && d === "drafts" && e2 && f === "publish" && method === "POST") return publishDraft(b, c, e2);
   if (a === "bank" && method === "GET") return json(200, await bankOverview());
