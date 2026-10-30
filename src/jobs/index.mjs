@@ -19,6 +19,7 @@ import {
   clustersSchema,
   experimentsSchema,
   verdictSchema,
+  CHANNELS,
 } from "../lib/schemas.mjs";
 
 const P = (pid) => `PRODUCT#${pid}`;
@@ -379,6 +380,8 @@ async function plan(job, trace) {
   const past = await db.query(P(product.id), "EXP#");
   const bank = await priors(card.category);
 
+  const adsAllowed = !product.adPolicy?.length || !!product.adPermissionConfirmed;
+  const allowedChannels = CHANNELS.filter((c) => c !== "ad_test" || adsAllowed);
   const r = await respond({
     name: "plan_experiments",
     effort: "high",
@@ -390,7 +393,7 @@ async function plan(job, trace) {
       "never fake testimonials, never spam the same text to many people, at most 5 drafts per experiment; reply drafts must answer the person's actual post. " +
       "Use the traction bank priors: prefer channels/angles that won for similar products, but keep one exploratory bet. " +
       "Do not repeat experiments that were killed before. If the product is in a restricted ad category, do not plan ad_test unless approval is confirmed. " +
-      "The 3 experiments MUST use 3 different channels and at least 2 different angle_type values, so the week tests distinct hypotheses. " +
+      "Use only allowed_channels; every experiment must be a real one you would run this week (no placeholders). The 3 experiments MUST use 3 different channels and at least 2 different angle_type values, so the week tests distinct hypotheses. " +
       "Write drafts ready to send as-is: no placeholders like [nama] or [name]; refer to the author as 'the founder of <product name>' in the market language. " +
       "Draft targets must be postable: threads_post and ad_test drafts are NEW posts (target_url ''); threads_reply drafts target a Threads post URL; " +
       "community_post replies may only target a discussion URL from top_signals where anyone can reply (Threads, Reddit, Lemon8, Quora, Kaskus, a forum thread) — " +
@@ -399,6 +402,7 @@ async function plan(job, trace) {
       product: card,
       ad_policy_flags: product.adPolicy,
       ad_permission_confirmed: !!product.adPermissionConfirmed,
+      allowed_channels: allowedChannels,
       clusters: clusters.map((c) => ({ label: c.label, summary: c.summary, intensity: c.intensity, exact_phrases: c.exactPhrases })),
       top_signals: signals.map((s) => ({ url: s.url, author: s.author, text: s.text.slice(0, 300), intent: s.intent })),
       intermediaries: intermediaries.map((m) => ({ name: m.name, type: m.type, url: m.url, offer: m.offer })),
@@ -414,8 +418,9 @@ async function plan(job, trace) {
 
   // Guard against the model ignoring the diversity rule: keep the first experiment per channel.
   const seenChannels = new Set();
-  const picked = r.json.experiments.filter((e) => !seenChannels.has(e.channel) && seenChannels.add(e.channel));
-  for (const e of r.json.experiments) if (picked.length < 3 && !picked.includes(e)) picked.push(e);
+  const usable = r.json.experiments.filter((e) => allowedChannels.includes(e.channel));
+  const picked = usable.filter((e) => !seenChannels.has(e.channel) && seenChannels.add(e.channel));
+  for (const e of usable) if (picked.length < 3 && !picked.includes(e)) picked.push(e);
   const created = [];
   for (const e of picked.slice(0, 3)) {
     const eid = id(8);
