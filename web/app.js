@@ -20,6 +20,9 @@ const cfg = () => ({ api: store.get("tr_api", ""), token: store.get("tr_token", 
 // Demo mode: read-only view of one showcase product, no token needed.
 const isDemo = () => document.body.classList.contains("demo");
 const setDemo = (on) => { document.body.classList.toggle("demo", on); store.set("tr_demo", on); };
+let demoSrc = "/demo"; // what a read-only view loads: the showcase product or a visitor's free scan
+let demoBase = "#/demo";
+const isTry = () => demoBase.startsWith("#/try/");
 
 async function api(path, { method = "GET", body } = {}) {
   const { api: base, token } = cfg();
@@ -68,7 +71,10 @@ async function renderRail(activeId) {
   $("#railAuth").textContent = isDemo() ? "Sign in" : "Settings";
   $("#railAuth").href = isDemo() ? "#/signin" : "#/settings";
   if (isDemo()) {
-    nav.innerHTML = `<a href="#/demo" ${activeId === "demo" ? 'aria-current="page"' : ""}>${esc(railDemoName)}<small>Live demo · read-only</small></a>`;
+    const mine = store.get("tr_try", "");
+    nav.innerHTML = `<a href="#/demo" ${activeId === "demo" ? 'aria-current="page"' : ""}>${esc(railDemoName)}<small>Live demo · read-only</small></a>`
+      + (mine ? `<a href="#/try/${esc(mine)}" ${activeId === mine ? 'aria-current="page"' : ""}>${esc(store.get("tr_try_name", "Your scan"))}<small>Your free scan</small></a>` : "")
+      + `<a href="#/try" ${activeId === "try" ? 'aria-current="page"' : ""}>Try it on your product<small>Free scan, no account</small></a>`;
     return;
   }
   try {
@@ -98,7 +104,7 @@ function stageText(stage) {
   );
 }
 
-let railDemoName = "Demo product";
+let railDemoName = store.get("tr_demo_name", "Live demo");
 
 // ---------------------------------------------------------------- views
 const view = () => $("#view");
@@ -120,7 +126,7 @@ async function productView(pid, tab = "overview") {
   const gen = ++renderGen;
   let data;
   try {
-    data = await api(isDemo() ? "/demo" : `/api/products/${pid}`);
+    data = await api(isDemo() ? demoSrc : `/api/products/${pid}`);
   } catch (e) {
     if (gen !== renderGen) return;
     view().innerHTML = `<section class="empty"><h1>Couldn't load this product</h1><p>${esc(e.message)}</p></section>`;
@@ -128,8 +134,9 @@ async function productView(pid, tab = "overview") {
   }
   if (gen !== renderGen) return;
   const { product: p, signals, clusters, experiments, jobs, intermediaries } = data;
-  const base = isDemo() ? "#/demo" : `#/p/${pid}`;
-  if (isDemo() && railDemoName !== (p.card?.name || p.name)) { railDemoName = p.card?.name || p.name; renderRail("demo"); }
+  const base = isDemo() ? demoBase : `#/p/${pid}`;
+  if (isDemo() && !isTry() && railDemoName !== (p.card?.name || p.name)) { railDemoName = p.card?.name || p.name; store.set("tr_demo_name", railDemoName); renderRail("demo"); }
+  if (isTry() && store.get("tr_try", "") === pid && store.get("tr_try_name", "") !== (p.card?.name || p.name)) { store.set("tr_try_name", p.card?.name || p.name); renderRail(pid); }
   const card = p.card;
   const idx = ORDER.indexOf(p.stage);
   const stepState = (s) => {
@@ -148,7 +155,8 @@ async function productView(pid, tab = "overview") {
   ];
 
   view().innerHTML = `
-    ${isDemo() ? `<div class="demo-bar"><p><b>Live demo, read-only.</b> A real Traction Radar run on ${esc(p.card?.name || p.name)}, a live product. Posting, rescans and edits are switched off.</p><a class="btn" href="#/signin">Sign in</a></div>` : ""}
+    ${isDemo() && !isTry() ? `<div class="demo-bar"><p><b>Live demo, read-only.</b> A real Traction Radar run on ${esc(p.card?.name || p.name)}, a live product. Posting, rescans and edits are switched off.</p><a class="btn" href="#/try">Try it on your product</a></div>` : ""}
+    ${isTry() ? `<div class="demo-bar"><p><b>Your free scan, read-only.</b> ${BUSY.has(p.stage) ? "The agent is working. This page updates by itself; a full scan takes about 5–8 minutes." : p.stage === "error" ? "The scan stopped early. Try again with a short description of what the product does." : "Done. Bookmark this page to come back to it."}</p><a class="btn" href="#/demo">See the live demo</a></div>` : ""}
     <header class="head">
       <div>
         <h1>${esc(card?.name || p.name)}</h1>
@@ -194,9 +202,9 @@ async function productView(pid, tab = "overview") {
   if (tab === "experiments") renderExperiments(el, pid, experiments, p);
   if (tab === "trace") renderTrace(el, jobs);
 
-  if (!isDemo() && (BUSY.has(p.stage) || jobs.some((j) => j.status === "queued" || j.status === "running"))) {
+  if ((!isDemo() || isTry()) && (BUSY.has(p.stage) || jobs.some((j) => j.status === "queued" || j.status === "running"))) {
     pollTimer = setTimeout(async () => {
-      if (location.hash.startsWith(`#/p/${pid}`)) {
+      if (location.hash.startsWith(base)) {
         const keepScroll = scrollY;
         await productView(pid, tab);
         scrollTo(0, keepScroll);
@@ -505,8 +513,8 @@ function signInView() {
         </a>
         <h1>Find your app’s first users from the people already asking for it.</h1>
         <p class="lede">An agent reads your product, finds real public posts describing the problem you solve, and plans three small experiments you can measure this week.</p>
-        <a class="btn primary" href="#/demo">View the live demo</a>
-        <p class="hint">The demo is a real run on a live product. It is read-only and needs no account.</p>
+        <div class="row"><a class="btn primary" href="#/demo">View the live demo</a><a class="btn" href="#/try">Try it on your product</a></div>
+        <p class="hint">The demo is a real run on a live product. Trying it on yours is free and needs no account.</p>
       </div>
       <form id="signinForm" class="signin-card">
         <h2>Sign in</h2>
@@ -531,6 +539,32 @@ function signInView() {
     } catch (err) {
       store.set("tr_token", prev.token);
       toast(err.status === 401 ? "That access token was rejected." : `Couldn't reach the API: ${err.message}`);
+    }
+  };
+}
+
+function tryView() {
+  view().innerHTML = `
+    <header class="head"><div><h1>Try it on your product</h1><p class="lede">Paste your app’s URL. The agent reads the page, looks for real public posts from people describing the problem you solve, and plans three experiments. Free, no account; results are read-only and nothing is posted.</p></div></header>
+    <form id="tryForm" class="section signin-card" style="margin-top:28px;max-width:620px">
+      <label>Product URL <input name="url" type="url" required placeholder="https://yourapp.com" /></label>
+      <label>What it does, in one line (optional) <input name="notes" maxlength="300" placeholder="Who it's for and what problem it solves" /></label>
+      <button class="btn primary">Start the free scan</button>
+      <p class="hint">A few free scans per day are shared by everyone. A full scan takes about 5–8 minutes.</p>
+    </form>`;
+  $("#tryForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $("button", e.target);
+    btn.disabled = true;
+    try {
+      const f = Object.fromEntries(new FormData(e.target));
+      const { id } = await api("/demo/scan", { method: "POST", body: f });
+      store.set("tr_try", id);
+      store.set("tr_try_name", new URL(f.url).hostname);
+      location.hash = `#/try/${id}`;
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
     }
   };
 }
@@ -567,15 +601,24 @@ async function router() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   const signedIn = Boolean(cfg().token);
   document.body.classList.remove("signin");
-  if (parts[0] === "demo") setDemo(true);
+  if (parts[0] === "demo" || parts[0] === "try") setDemo(true);
   else if (signedIn) setDemo(false);
   else if (!(store.get("tr_demo", false) && parts[0] === "bank")) setDemo(false);
 
   if (parts[0] === "signin" || (!signedIn && !isDemo())) {
     signInView();
   } else if (parts[0] === "demo") {
+    demoSrc = "/demo"; demoBase = "#/demo";
     renderRail("demo");
     await productView("demo", parts[1] || "demand");
+  } else if (parts[0] === "try" && parts[1]) {
+    demoSrc = `/demo/p/${encodeURIComponent(parts[1])}`; demoBase = `#/try/${parts[1]}`;
+    renderRail(parts[1]);
+    await productView(parts[1], parts[2] || "overview");
+  } else if (parts[0] === "try") {
+    demoBase = "#/demo";
+    renderRail("try");
+    tryView();
   } else if (parts[0] === "p" && parts[1]) {
     renderRail(parts[1]);
     await productView(parts[1], parts[2] || "overview");

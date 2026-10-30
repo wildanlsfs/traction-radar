@@ -52,4 +52,6 @@ export const settings = {
   publicSiteUrl: process.env.PUBLIC_SITE_URL || "http://localhost:8787",
   mock: process.env.MOCK_LLM === "1",
   demoProductId: process.env.DEMO_PRODUCT_ID || "",
+  publicScansPerDay: Number(process.env.PUBLIC_SCANS_PER_DAY || 10),
+  publicScansPerIp: Number(process.env.PUBLIC_SCANS_PER_IP || 2),
 };

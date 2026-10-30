@@ -103,6 +103,56 @@ async function conversion(event) {
   return json(200, { ok: true });
 }
 
+// ---------------------------------------------------------------- public try-it scans
+// Anyone can scan one product URL. Capped per day (cost) and per IP (abuse); results are read-only.
+const today = () => new Date().toISOString().slice(0, 10);
+function clientIp(event) {
+  return event.requestContext?.http?.sourceIp || event.headers?.["x-forwarded-for"]?.split(",")[0]?.trim() || "unknown";
+}
+
+async function publicScan(event) {
+  const b = body(event);
+  const url = String(b.url ?? "").trim();
+  if (!url || !isPublicHttpUrl(url)) return json(400, { error: "Enter a public product URL, like https://yourapp.com" });
+  const ipKey = createHash("sha256").update(clientIp(event)).digest("hex").slice(0, 16);
+  const day = today();
+  const ip = await db.update(`RATE#ip#${ipKey}`, day, { ttl: Math.floor(Date.now() / 1000) + 3 * 86400 }, { n: 1 });
+  if (ip.n > settings.publicScansPerIp) return json(429, { error: `You've used today's ${settings.publicScansPerIp} free scans. Try again tomorrow.` });
+  const all = await db.update("RATE#public", day, { ttl: Math.floor(Date.now() / 1000) + 3 * 86400 }, { n: 1 });
+  if (all.n > settings.publicScansPerDay) return json(429, { error: "Today's free scans are used up. Watch the live demo, or try again tomorrow." });
+
+  const pid = id(10);
+  const createdAt = now();
+  const product = {
+    pk: P(pid),
+    sk: "META",
+    gsi1pk: "PUBLIC",
+    gsi1sk: createdAt,
+    type: "product",
+    id: pid,
+    public: true,
+    name: new URL(url).hostname,
+    url,
+    notes: String(b.notes ?? "").slice(0, 600),
+    apiBase: apiBaseFrom(event),
+    stage: "queued",
+    createdAt,
+  };
+  await db.put(product);
+  await enqueue({ type: "product_card", productId: pid, chain: ["radar", "plan"], apiBase: product.apiBase });
+  return json(202, { id: pid });
+}
+
+async function publicView(pid) {
+  const res = await getProduct(pid);
+  if (res.statusCode !== 200) return res;
+  const data = JSON.parse(res.body);
+  if (pid !== settings.demoProductId && !data.product.public) return json(404, { error: "not found" });
+  delete data.events;
+  data.jobs = data.jobs.filter((j) => j.status !== "error");
+  return json(200, { ...data, demo: true });
+}
+
 // ---------------------------------------------------------------- owner routes
 async function listProducts() {
   const rows = await db.queryGsi("PRODUCTS", "", { reverse: true });
@@ -241,15 +291,13 @@ export async function route(event) {
   }
 
   // Read-only public demo: one showcase product chosen by the owner, plus the anonymous bank.
-  if (parts[0] === "demo" && method === "GET") {
+  if (parts[0] === "demo") {
+    if (parts[1] === "scan" && method === "POST") return publicScan(event);
+    if (method !== "GET") return json(404, { error: "not found" });
     if (parts[1] === "bank") return json(200, await bankOverview());
+    if (parts[1] === "p" && parts[2]) return publicView(parts[2]);
     if (!settings.demoProductId) return json(404, { error: "no demo configured" });
-    const res = await getProduct(settings.demoProductId);
-    if (res.statusCode !== 200) return res;
-    const data = JSON.parse(res.body);
-    delete data.events;
-    data.jobs = data.jobs.filter((j) => j.status !== "error");
-    return json(200, { ...data, demo: true });
+    return publicView(settings.demoProductId);
   }
 
   if (parts[0] !== "api") return json(404, { error: "not found" });

@@ -103,3 +103,21 @@ test("signal URLs must be real posts, not search pages", async () => {
   assert.equal(isPostUrl("https://www.threads.com/@a/post/abc"), true);
   assert.equal(isPostUrl("https://play.google.com/store/apps/details?id=taarufapp.id"), true);
 });
+
+test("public scans are capped, read-only, and never expose owner products", async () => {
+  const owner = (await call("POST", "/api/products", { url: "https://owner.example.com" })).json.product.id;
+  assert.equal((await call("GET", `/demo/p/${owner}`)).statusCode, 404);
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const r = await call("POST", "/demo/scan", { url: `https://try${i}.example.com` });
+    assert.equal(r.statusCode, 202);
+    ids.push(r.json.id);
+  }
+  assert.equal((await call("POST", "/demo/scan", { url: "https://try3.example.com" })).statusCode, 429);
+  assert.equal((await call("POST", "/demo/scan", { url: "http://10.0.0.1" })).statusCode, 400);
+  const view = await call("GET", `/demo/p/${ids[0]}`);
+  assert.equal(view.statusCode, 200);
+  assert.equal(view.json.demo, true);
+  const listed = (await call("GET", "/api/products")).json.products.map((p) => p.id);
+  assert.ok(!listed.includes(ids[0]), "public scans stay out of the owner's list");
+});
