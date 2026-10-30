@@ -25,6 +25,16 @@ const P = (pid) => `PRODUCT#${pid}`;
 
 // A signal must point at the actual post/page, never at a search-results page the model made up.
 const SEARCH_PAGE = /(youtube\.com\/results|google\.[a-z.]+\/search|bing\.com\/search|duckduckgo\.com\/|search\.yahoo\.|[?&](q|query|search_query|keyword)=)/i;
+// Threads posts found through web search still count as Threads demand.
+export function sourceOf(url, fallback = "web") {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    if (h === "threads.com" || h === "threads.net") return "threads";
+    if (h.endsWith("reddit.com")) return "reddit";
+  } catch {}
+  return fallback;
+}
+
 export function isPostUrl(url) {
   if (!url || !isPublicHttpUrl(url)) return false;
   return !SEARCH_PAGE.test(url);
@@ -179,7 +189,7 @@ async function radar(job, trace) {
           }
           const key = s.url || s.text.slice(0, 80);
           if (found.has(key)) continue;
-          found.set(key, { ...s, text: s.text.slice(0, 1500) });
+          found.set(key, { ...s, source: sourceOf(s.url, s.source), text: s.text.slice(0, 1500) });
           added++;
         }
         return {
@@ -231,7 +241,7 @@ async function radar(job, trace) {
     instructions:
       "You are a demand scout for an app that has zero users. Find REAL people in public who have the problem it solves, " +
       "and the intermediaries who already gather them. Process: (1) run search_threads with 4-8 of the provided phrases and variations, " +
-      "(2) use web search for forums, Q&A sites, Reddit, Kaskus, Quora, Facebook pages and articles' comment threads, " +
+      "(2) use web search for public Threads posts first (queries like `site:threads.com <phrase>` for 2-4 phrases), then forums, Q&A sites, Reddit, Kaskus, Quora, Lemon8, Facebook pages and articles' comment threads, " +
       "(3) call record_signals after EVERY search round (not only at the end) with each relevant post you saw: exact text, the URL of that specific post or page (never a search-results URL), public handle, " +
       "(4) call record_intermediaries. Aim for 25-60 signals. Skip ads, brand posts and the product's own posts. " +
       "Do not collect private data beyond the public handle. When done, reply with one short paragraph of what you found.",
@@ -245,7 +255,7 @@ async function radar(job, trace) {
   for (const r of result.searchResults ?? []) {
     const key = r.url;
     if (key && isPostUrl(key) && !found.has(key) && r.snippet && r.snippet.length > 40)
-      found.set(key, { source: "web", url: r.url, author: r.title ?? "", text: r.snippet.slice(0, 800), harvested: true });
+      found.set(key, { source: sourceOf(r.url, "web"), url: r.url, author: r.title ?? "", text: r.snippet.slice(0, 800), harvested: true });
   }
 
   const raw = [...found.values()].slice(0, 120);

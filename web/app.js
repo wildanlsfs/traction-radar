@@ -307,7 +307,7 @@ function renderDemand(el, signals, clusters, intermediaries, p) {
   el.innerHTML = `
     <section class="section">
       <h2>Demand chart</h2>
-      <p class="hint">Every number is a real public post and its intent score. The closer to the centre, the closer that person is to trying a solution this week. ${st.candidates ? `${st.relevant} of ${st.candidates} posts showed real intent.` : ""} ${st.threadsConnected === false ? "Threads is not connected, so this scan used the web only." : ""}</p>
+      <p class="hint">Every number is a real public post and its intent score. The closer to the centre, the closer that person is to trying a solution this week. ${st.candidates ? `${st.relevant} of ${st.candidates} posts showed real intent.` : ""} ${st.threadsConnected === false ? (signals.some((x) => x.source === "threads") ? `${signals.filter((x) => x.source === "threads").length} of these are Threads posts found through web search; direct Threads keyword search is waiting for Meta’s app review.` : "This scan used web search; direct Threads keyword search is waiting for Meta’s app review.") : ""}</p>
       <div class="radar-wrap">
         <div class="radar reveal">${rose}${soundings}</div>
         <div>

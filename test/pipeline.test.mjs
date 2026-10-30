@@ -102,6 +102,10 @@ test("signal URLs must be real posts, not search pages", async () => {
   assert.equal(isPostUrl("http://127.0.0.1/x"), false);
   assert.equal(isPostUrl("https://www.threads.com/@a/post/abc"), true);
   assert.equal(isPostUrl("https://play.google.com/store/apps/details?id=taarufapp.id"), true);
+  const { sourceOf } = await import("../src/jobs/index.mjs");
+  assert.equal(sourceOf("https://www.threads.com/@a/post/abc"), "threads");
+  assert.equal(sourceOf("https://threads.net/@a/post/abc", "forum"), "threads");
+  assert.equal(sourceOf("https://kaskus.co.id/thread/x", "forum"), "forum");
 });
 
 test("public scans are capped, read-only, and never expose owner products", async () => {
