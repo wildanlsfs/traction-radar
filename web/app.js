@@ -2,6 +2,16 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+// Escape, then highlight any exact phrase the clustering step pulled out of this text.
+const hl = (text, phrases) => {
+  let out = esc(text);
+  for (const ph of [...new Set(phrases)].filter((x) => x && x.length > 3).sort((a, b) => b.length - a.length)) {
+    const e = esc(ph).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(?![^<]*>)${e}`, "i"), (m) => `<mark>${m}</mark>`);
+  }
+  return out;
+};
+
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
@@ -46,7 +56,7 @@ const CHANNEL = {
   intermediary_outreach: "Partner with an intermediary",
   ad_test: "Small Meta ad test",
 };
-const STATUS = { draft: "Waiting for your approval", running: "Running", decided: "Decided", blocked_policy: "Needs ad permission" };
+const STATUS = { draft: "Awaiting approval", running: "Running", decided: "Decided", blocked_policy: "Needs ad permission" };
 const VERDICT = { keep: "Keep going", kill: "Stop this one", ready_for_ads: "Ready for ads", needs_more_data: "Needs more data" };
 
 // ---------------------------------------------------------------- rail
@@ -131,13 +141,19 @@ async function productView(pid, tab = "overview") {
         <p class="lede">${esc(card?.one_liner || p.notes || "Reading the product…")}</p>
         ${p.url ? `<a class="url" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.url)}</a>` : ""}
       </div>
-      <div class="row">
+      ${card ? `<dl class="cartouche">
+        <div><dt>Category</dt><dd>${esc(card.category.replaceAll("_", " "))}</dd></div>
+        <div><dt>Market</dt><dd>${esc(card.regions.join(", "))} · ${esc(card.market_language)}</dd></div>
+        <div><dt>Price</dt><dd>${esc(card.pricing)}</dd></div>
+        <div><dt>Ad policy</dt><dd class="${(p.adPolicy ?? []).length ? "flag" : ""}">${(p.adPolicy ?? []).length ? esc(p.adPolicy.map((f) => f.label).join(", ")) : "No restriction found"}</dd></div>
+      </dl>` : ""}
+    </header>
+    <div class="row actions">
         <button class="btn" data-run="radar" ${BUSY.has(p.stage) ? "disabled" : ""}>Rescan demand</button>
         <button class="btn" data-run="plan" ${BUSY.has(p.stage) || !clusters.length ? "disabled" : ""}>Plan new experiments</button>
         <button class="btn primary" data-run="measure" ${!experiments.some((e) => e.status === "running") ? "disabled" : ""}>Judge results now</button>
-      </div>
-    </header>
-    <ol class="pipeline">${STEPS.map((s) => `<li class="${stepState(s)}"><span>${s.label}</span></li>`).join("")}</ol>
+    </div>
+    <ol class="course" aria-label="Progress">${STEPS.map((s) => `<li class="${stepState(s)}">${s.label}</li>`).join("")}</ol>
     ${p.stage === "error" ? `<div class="policy"><h3>The last step failed</h3><p>${esc(p.stageError)}</p><div class="row" style="margin-top:10px"><button class="btn" data-run="all">Run everything again</button></div></div>` : ""}
     <nav class="tabs">${tabs
       .map(([k, label, n]) => `<a href="#/p/${pid}/${k}" ${k === tab ? 'aria-current="page"' : ""}>${label}${n !== undefined ? `<span class="count">${n}</span>` : ""}</a>`)
@@ -204,7 +220,7 @@ function renderOverview(el, p, card, intermediaries) {
     </section>
     <section class="section">
       <h2>Phrases people use before they know you exist</h2>
-      <div class="pills">${card.search_phrases.map((s) => `<span class="pill">${esc(s)}</span>`).join("")}</div>
+      <div class="phrases">${card.search_phrases.map((s) => `<span class="phrase">${esc(s)}</span>`).join("")}</div>
     </section>
     ${card.risks?.length ? `<section class="section"><h2>Trust risks on the landing page</h2><ul>${card.risks.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></section>` : ""}
     <section class="section">
@@ -228,33 +244,61 @@ function renderDemand(el, signals, clusters, intermediaries, p) {
     return;
   }
   const byId = Object.fromEntries(signals.map((s) => [s.id, s]));
-  const lanes = clusters.map((c) => ({ label: c.label, sub: `${c.signalIds.length} people`, items: c.signalIds.map((i) => byId[i]).filter(Boolean) }));
+  const phrases = clusters.flatMap((c) => c.exactPhrases ?? []);
   const clustered = new Set(clusters.flatMap((c) => c.signalIds));
   const rest = signals.filter((s) => !clustered.has(s.id));
-  if (rest.length) lanes.push({ label: "Unclustered", sub: `${rest.length} people`, items: rest });
+  const sectors = clusters.map((c) => ({ label: c.label, items: c.signalIds.map((i) => byId[i]).filter(Boolean) }));
+  if (rest.length) sectors.push({ label: "Unclustered", items: rest });
+  const LET = "ABCDEFGH";
   const st = p.radarStats ?? {};
+  const n = sectors.length || 1;
+  const span = (2 * Math.PI) / n;
+  const top = -Math.PI / 2;
+  const pt = (r, a) => [50 + r * 100 * Math.cos(a), 50 + r * 100 * Math.sin(a)];
+  const rOf = (v) => 0.07 + ((100 - Math.max(0, Math.min(100, v))) / 100) * 0.39;
+  const rings = [rOf(0), rOf(20), rOf(50), rOf(80)];
+  const spokes = sectors.map((_, i) => pt(0.48, top + i * span));
+  const labels = sectors.map((_, i) => pt(0.5, top + (i + 0.5) * span));
+  const rose = `<svg class="rose" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="48" fill="none" stroke="currentColor" stroke-width=".35"/>
+      ${Array.from({ length: 72 }, (_, k) => { const a = (k * Math.PI) / 36; const o = k % 6 ? 47 : 45.6; const [x1, y1] = [50 + 48 * Math.cos(a), 50 + 48 * Math.sin(a)]; const [x2, y2] = [50 + o * Math.cos(a), 50 + o * Math.sin(a)]; return `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="currentColor" stroke-width=".25"/>`; }).join("")}
+      ${rings.map((r, i) => `<circle cx="50" cy="50" r="${r * 100}" fill="none" stroke="var(--rule)" stroke-width="${i === 3 ? ".45" : ".3"}" ${i === 0 ? "" : 'stroke-dasharray="1 1.2"'}/>`).join("")}
+      <circle cx="50" cy="50" r="${(rOf(75) * 100).toFixed(2)}" fill="color-mix(in srgb, var(--hot) 6%, transparent)"/>
+      ${spokes.map(([x, y]) => `<line x1="50" y1="50" x2="${x.toFixed(2)}" y2="${y.toFixed(2)}" stroke="var(--rule)" stroke-width=".3"/>`).join("")}
+      ${labels.map(([x, y], i) => `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-family="Archivo" font-weight="800" font-size="3.4" fill="var(--cobalt)" style="font-variation-settings:'wdth' 125">${LET[i]}</text>`).join("")}
+      ${[80, 50, 20].map((v) => [v, rOf(v)]).map(([v, r]) => `<text x="${50 + 0.6}" y="${50 - r * 100 - 0.8}" font-family="Archivo" font-size="2.1" fill="var(--muted)">${v}</text>`).join("")}
+    </svg>`;
+  let k = 0;
+  const soundings = sectors
+    .map((sec, si) =>
+      sec.items
+        .map((s, i) => {
+          const r = rOf(s.intent);
+          const a = top + si * span + ((i + 1) / (sec.items.length + 1)) * span;
+          const [x, y] = pt(r, a);
+          return `<button class="sounding ${s.intent >= 75 ? "hot" : ""}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;animation-delay:${k++ * 50}ms" data-sig="${s.id}" aria-label="Intent ${s.intent}: ${esc(s.text.slice(0, 80))}">${s.intent}</button>`;
+        })
+        .join(""),
+    )
+    .join("");
 
   el.innerHTML = `
     <section class="section">
-      <h2>Demand map</h2>
-      <p class="hint">Each dot is a real public post. Further right means the person is closer to trying a solution this week. ${st.candidates ? `${st.relevant} of ${st.candidates} posts showed real intent.` : ""} ${st.threadsConnected === false ? "Threads is not connected, so this scan used the web only." : ""}</p>
-      <div class="map-legend"><span><i style="background:var(--teal)"></i>Feels the pain</span><span><i style="background:var(--hot)"></i>Looking for a solution now (intent 75+)</span></div>
-      <div class="map map-reveal">
-        ${lanes
-          .map(
-            (l, li) => `<div class="lane"><div class="lane-label">${esc(l.label)}<small>${esc(l.sub)}</small></div><div class="lane-track">${l.items
-              .map((s, i) => `<button class="dot ${s.intent >= 75 ? "hot" : ""}" style="left:${Math.max(1, Math.min(99, s.intent))}%;top:${[50, 26, 74, 38, 62][i % 5]}%;animation-delay:${(li * 6 + i) * 45}ms" data-sig="${s.id}" aria-label="Intent ${s.intent}: ${esc(s.text.slice(0, 80))}"></button>`)
-              .join("")}</div></div>`,
-          )
-          .join("")}
-        <div class="axis"><span></span><div class="scale"><span style="left:0%">0</span><span style="left:50%">50</span><span style="left:80%">80</span><span style="left:100%">100</span></div></div>
+      <h2>Demand chart</h2>
+      <p class="hint">Every number is a real public post and its intent score. The closer to the centre, the closer that person is to trying a solution this week. ${st.candidates ? `${st.relevant} of ${st.candidates} posts showed real intent.` : ""} ${st.threadsConnected === false ? "Threads is not connected, so this scan used the web only." : ""}</p>
+      <div class="radar-wrap">
+        <div class="radar reveal">${rose}${soundings}</div>
+        <div>
+          <div class="key"><span><b>◯ 75+</b> looking for a solution now</span><span>Sectors are pain points</span></div>
+          <ol class="legend">${sectors.map((sec, i) => `<li><span class="sector">${LET[i]}</span><span>${esc(sec.label)}</span><span class="n">${sec.items.length} ${sec.items.length === 1 ? "post" : "posts"}</span></li>`).join("")}</ol>
+          <div id="quote"></div>
+        </div>
       </div>
-      <div id="quote"></div>
     </section>
     <section class="section">
       <h2>Pain points, in their words</h2>
       <div class="clusters">${clusters
-        .map((c) => `<div class="cluster"><h3>${esc(c.label)}<span class="intent ${c.intensity >= 75 ? "hot" : ""}">${c.intensity}</span></h3><p>${esc(c.summary)}</p><ul>${c.exactPhrases.map((x) => `<li>“${esc(x)}”</li>`).join("")}</ul></div>`)
+        .map((c, i) => `<div class="cluster"><h3><span>${LET[i]} · ${esc(c.label)}</span><span class="intent ${c.intensity >= 75 ? "hot" : ""}">${c.intensity}</span></h3><p>${esc(c.summary)}</p><ul>${c.exactPhrases.map((x) => `<li>“<mark>${esc(x)}</mark>”</li>`).join("")}</ul></div>`)
         .join("")}</div>
     </section>
     ${intermediaries.length ? `<section class="section">
@@ -266,16 +310,16 @@ function renderDemand(el, signals, clusters, intermediaries, p) {
     <section class="section">
       <h2>All posts</h2>
       <ul class="list-plain">${signals
-        .map((s) => `<li class="signal-row"><span class="intent ${s.intent >= 75 ? "hot" : ""}">${s.intent}</span><div><p>${esc(s.text)}</p><p class="meta">${esc(s.author)} · ${esc(s.source)} · ${esc((s.stage || "").replaceAll("_", " "))} ${s.url ? `· <a href="${esc(s.url)}" target="_blank" rel="noopener">Open post</a>` : ""}</p></div></li>`)
+        .map((s) => `<li class="signal-row"><span class="intent ${s.intent >= 75 ? "hot" : ""}">${s.intent}</span><div><p class="q">${hl(s.text, phrases)}</p><p class="meta">${esc(s.author)} · ${esc(s.source)} · ${esc((s.stage || "").replaceAll("_", " "))} ${s.url ? `· <a href="${esc(s.url)}" target="_blank" rel="noopener">Open post</a>` : ""}</p></div></li>`)
         .join("")}</ul>
     </section>`;
 
   const showQuote = (sid) => {
     const s = byId[sid] ?? rest.find((x) => x.id === sid);
-    el.querySelectorAll(".dot").forEach((d) => d.setAttribute("aria-pressed", d.dataset.sig === sid ? "true" : "false"));
-    $("#quote", el).innerHTML = `<div class="quote"><blockquote>${esc(s.text)}</blockquote><footer><span class="intent ${s.intent >= 75 ? "hot" : ""}">Intent ${s.intent}</span><span>${esc(s.author)}</span><span>${esc(s.painPoint)}</span>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">Open post</a>` : ""}</footer></div>`;
+    el.querySelectorAll(".sounding").forEach((d) => d.setAttribute("aria-pressed", d.dataset.sig === sid ? "true" : "false"));
+    $("#quote", el).innerHTML = `<div class="quote"><blockquote>${hl(s.text, phrases)}</blockquote><footer><span class="intent ${s.intent >= 75 ? "hot" : ""}">Intent ${s.intent}</span><span>${esc(s.author)}</span><span>${esc(s.painPoint)}</span>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">Open post</a>` : ""}</footer></div>`;
   };
-  el.querySelectorAll(".dot").forEach((d) => d.addEventListener("click", () => showQuote(d.dataset.sig)));
+  el.querySelectorAll(".sounding").forEach((d) => d.addEventListener("click", () => showQuote(d.dataset.sig)));
   if (signals[0]) showQuote(signals[0].id);
 }
 
@@ -284,18 +328,20 @@ function renderExperiments(el, pid, experiments, p) {
     el.innerHTML = `<p class="hint">${BUSY.has(p.stage) ? "Planning three experiments from the demand map and the traction bank…" : "No experiments yet."}</p>`;
     return;
   }
+  el.style.paddingTop = "18px";
   el.innerHTML = experiments
-    .map((e) => {
+    .map((e, ei) => {
       const rate = e.clicks ? Math.round((e.signups / e.clicks) * 100) : 0;
       return `<article class="exp" data-exp="${e.id}">
+        <span class="exp-tab">Experiment ${"ABC"[ei] ?? ei + 1}</span>
         <div class="exp-head">
           <div><p class="channel">${esc(CHANNEL[e.channel] ?? e.channel)} · targets “${esc(e.targetCluster)}”</p><h2>${esc(e.title)}</h2></div>
-          <span class="status ${esc(e.status)}">${esc(STATUS[e.status] ?? e.status)}</span>
+          <span class="stamp ${esc(e.status)}">${esc(STATUS[e.status] ?? e.status)}</span>
         </div>
         <p class="angle">${esc(e.angle)}</p>
         <p class="why">${esc(e.hypothesis)}</p>
         ${e.priorEvidence ? `<p class="why" style="margin-top:6px"><strong>Evidence:</strong> ${esc(e.priorEvidence)}</p>` : ""}
-        <div class="scores">
+        <div class="log">
           <div><b>${e.clicks ?? 0}</b><span>clicks</span></div>
           <div><b>${e.signups ?? 0}</b><span>signups (${rate}%)</span></div>
           <div><b>${e.payments ?? 0}</b><span>payments</span></div>
