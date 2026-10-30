@@ -93,15 +93,19 @@ function emptyView() {
 }
 
 let pollTimer;
+let renderGen = 0; // newest render wins: a slow background refresh must not overwrite a tab the user just opened
 async function productView(pid, tab = "overview") {
   clearTimeout(pollTimer);
+  const gen = ++renderGen;
   let data;
   try {
     data = await api(`/api/products/${pid}`);
   } catch (e) {
+    if (gen !== renderGen) return;
     view().innerHTML = `<section class="empty"><h1>Couldn't load this product</h1><p>${esc(e.message)}</p></section>`;
     return;
   }
+  if (gen !== renderGen) return;
   const { product: p, signals, clusters, experiments, jobs, intermediaries } = data;
   const card = p.card;
   const idx = ORDER.indexOf(p.stage);
@@ -457,6 +461,7 @@ $("#newProductForm").addEventListener("submit", async (ev) => {
 // ---------------------------------------------------------------- router
 async function router() {
   clearTimeout(pollTimer);
+  renderGen++;
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "p" && parts[1]) {
     renderRail(parts[1]);
