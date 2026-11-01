@@ -149,7 +149,7 @@ Resources:
           Properties:
             ScheduleExpression: "cron(0 1 * * ? *)"
       Policies:
-        - DynamoDBReadPolicy: { TableName: !Ref Table }
+        - DynamoDBCrudPolicy: { TableName: !Ref Table } # enqueue() writes a job record before sending to SQS
         - SQSSendMessagePolicy: { QueueName: !GetAtt JobQueue.QueueName }
 
   # ---------- Static site ----------
