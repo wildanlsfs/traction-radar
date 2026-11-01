@@ -492,6 +492,8 @@ async function creative(job, trace) {
 async function measure(job, trace) {
   const product = await loadProduct(job.productId);
   const exps = (await db.query(P(product.id), "EXP#")).filter((e) => ["running", "decided"].includes(e.status));
+  // Without the snippet, zero signups means "not measured", not "nobody signed up".
+  const signupTracking = (await db.query(P(product.id), "EVENT#", { limit: 1 })).length > 0;
   for (const e of exps) {
     const days = e.startedAt ? Math.max(0, (Date.now() - Date.parse(e.startedAt)) / 86400000) : 0;
     const r = await respond({
@@ -502,7 +504,8 @@ async function measure(job, trace) {
       schema: verdictSchema,
       instructions:
         "Judge a 7-day growth experiment for an early product. Be numerate and conservative: fewer than ~30 clicks or 2 days is usually needs_more_data. " +
-        "ready_for_ads only if the angle converts clicks to signups/payments clearly better than the others and the product has no unresolved ad-policy flag.",
+        "ready_for_ads only if the angle converts clicks to signups/payments clearly better than the others and the product has no unresolved ad-policy flag. " +
+        "If signup_tracking_installed is false, signups are NOT measured: judge on clicks only, never call it 0 signups, and make installing the snippet part of next_step.",
       input: JSON.stringify({
         experiment: {
           title: e.title,
@@ -517,9 +520,10 @@ async function measure(job, trace) {
         siblings: exps.filter((x) => x.id !== e.id).map((x) => ({ channel: x.channel, angle_type: x.angle_type, clicks: x.clicks, signups: x.signups, payments: x.payments })),
         ad_policy_flags: product.adPolicy,
         ad_permission_confirmed: !!product.adPermissionConfirmed,
+        signup_tracking_installed: signupTracking,
       }),
     });
-    const verdict = { ...r.json, at: now() };
+    const verdict = { ...r.json, at: now(), signupTracking };
     const updated = await db.update(P(product.id), `EXP#${e.id}`, {
       verdict,
       days: +days.toFixed(1),
