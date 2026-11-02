@@ -4,6 +4,13 @@
 
 Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Oct 26 – Nov 4, 2026). Indie track, theme *Build for Your World*. All code in this repository was written during the hackathon.
 
+## Demo
+
+- **3-minute demo video:** [docs/traction-radar-demo.mp4](docs/traction-radar-demo.mp4) ([direct link](https://github.com/wildanlsfs/traction-radar/raw/main/docs/traction-radar-demo.mp4))
+- **Live read-only demo** (a real run on my product Taarufin): https://d31lz0ilgvjrj6.cloudfront.net/#/demo
+- **Try it on your own product** (free, no account): https://d31lz0ilgvjrj6.cloudfront.net/#/try
+- **Real result so far:** three Threads posts from Taarufin's account brought 15 real clicks in under three days (bots filtered); the agent's verdict was "needs more data", and that outcome is the first entry in the traction bank.
+
 ## The problem
 
 AI made building an app fast. Getting its first users is still slow and expensive. Content takes months to show results; ads burn budget before you know which message works. Most indie products die with zero users, not because nobody needs them, but because the founder never found the people who already describe the problem in public.
