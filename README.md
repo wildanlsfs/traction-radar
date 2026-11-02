@@ -6,7 +6,7 @@ Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/m
 
 ## Demo
 
-- **3-minute demo video:** [docs/traction-radar-demo.mp4](docs/traction-radar-demo.mp4) ([direct link](https://github.com/wildanlsfs/traction-radar/raw/main/docs/traction-radar-demo.mp4))
+- **3-minute demo video:** https://wildanlsfs.github.io/traction-radar/ (file: [docs/traction-radar-demo.mp4](docs/traction-radar-demo.mp4))
 - **Live read-only demo** (a real run on my product Taarufin): https://d31lz0ilgvjrj6.cloudfront.net/#/demo
 - **Try it on your own product** (free, no account): https://d31lz0ilgvjrj6.cloudfront.net/#/try
 - **Real result so far:** three Threads posts from Taarufin's account brought 15 real clicks in under three days (bots filtered); the agent's verdict was "needs more data", and that outcome is the first entry in the traction bank.
